@@ -17,6 +17,7 @@ import typing as tp
 import torch
 
 from ..item_net import ItemNetBase
+from .interaction_weighting import InteractionWeightingBase
 from .net_blocks import PositionalEncodingBase, TransformerLayersBase
 
 
@@ -49,6 +50,7 @@ class TransformerTorchBackbone(torch.nn.Module):
         item_model: ItemNetBase,
         pos_encoding_layer: PositionalEncodingBase,
         transformer_layers: TransformerLayersBase,
+        interaction_weighting_layer: tp.Optional[InteractionWeightingBase],
         use_causal_attn: bool = True,
         use_key_padding_mask: bool = False,
     ) -> None:
@@ -58,16 +60,22 @@ class TransformerTorchBackbone(torch.nn.Module):
         self.pos_encoding_layer = pos_encoding_layer
         self.emb_dropout = torch.nn.Dropout(dropout_rate)
         self.transformer_layers = transformer_layers
+        self.interaction_weighting_layer = interaction_weighting_layer
         self.use_causal_attn = use_causal_attn
         self.use_key_padding_mask = use_key_padding_mask
         self.n_heads = n_heads
 
     @staticmethod
     def _convert_mask_to_float(mask: torch.Tensor, query: torch.Tensor) -> torch.Tensor:
-        return torch.zeros_like(mask, dtype=query.dtype).masked_fill_(mask, float("-inf"))
+        return torch.zeros_like(mask, dtype=query.dtype).masked_fill_(
+            mask, float("-inf")
+        )
 
     def _merge_masks(
-        self, attn_mask: torch.Tensor, key_padding_mask: torch.Tensor, query: torch.Tensor
+        self,
+        attn_mask: torch.Tensor,
+        key_padding_mask: torch.Tensor,
+        query: torch.Tensor,
     ) -> torch.Tensor:
         """
         Merge `attn_mask` and `key_padding_mask` as a new `attn_mask`.
@@ -93,14 +101,16 @@ class TransformerTorchBackbone(torch.nn.Module):
         """
         batch_size, seq_len, _ = query.shape
 
-        key_padding_mask_expanded = self._convert_mask_to_float(  # [batch_size, session_max_len]
-            key_padding_mask, query
-        ).view(
-            batch_size, 1, seq_len
+        key_padding_mask_expanded = (
+            self._convert_mask_to_float(  # [batch_size, session_max_len]
+                key_padding_mask, query
+            ).view(batch_size, 1, seq_len)
         )  # [batch_size, 1, session_max_len]
 
         attn_mask_expanded = (
-            self._convert_mask_to_float(attn_mask, query)  # [session_max_len, session_max_len]
+            self._convert_mask_to_float(
+                attn_mask, query
+            )  # [session_max_len, session_max_len]
             .view(1, seq_len, seq_len)
             .expand(batch_size, -1, -1)
         )  # [batch_size, session_max_len, session_max_len]
@@ -114,7 +124,12 @@ class TransformerTorchBackbone(torch.nn.Module):
         torch.diagonal(res, dim1=1, dim2=2).zero_()
         return res
 
-    def encode_sessions(self, sessions: torch.Tensor, item_embs: torch.Tensor) -> torch.Tensor:
+    def encode_sessions(
+        self,
+        sessions: torch.Tensor,
+        item_embs: torch.Tensor,
+        interaction_weights: tp.Optional[torch.Tensor],
+    ) -> torch.Tensor:
         """
         Pass user history through item embeddings.
         Add positional encoding.
@@ -136,19 +151,34 @@ class TransformerTorchBackbone(torch.nn.Module):
         attn_mask = None
         key_padding_mask = None
 
-        timeline_mask = (sessions != 0).unsqueeze(-1)  # [batch_size, session_max_len, 1]
+        timeline_mask = (sessions != 0).unsqueeze(
+            -1
+        )  # [batch_size, session_max_len, 1]
 
         seqs = item_embs[sessions]  # [batch_size, session_max_len, n_factors]
+        if self.interaction_weighting_layer is not None:
+            if interaction_weights is None:
+                explanation = "interaction_weights must not be None if interaction_weighting_layer is specified"
+                raise ValueError(explanation)
+
+            seqs = self.interaction_weighting_layer(seqs, weights=interaction_weights)
+
         seqs = self.pos_encoding_layer(seqs)
         seqs = self.emb_dropout(seqs)
 
         if self.use_causal_attn:
             attn_mask = ~torch.tril(
-                torch.ones((session_max_len, session_max_len), dtype=torch.bool, device=sessions.device)
+                torch.ones(
+                    (session_max_len, session_max_len),
+                    dtype=torch.bool,
+                    device=sessions.device,
+                )
             )
         if self.use_key_padding_mask:
             key_padding_mask = sessions == 0
-            if attn_mask is not None:  # merge masks to prevent nan gradients for torch < 2.5.0
+            if (
+                attn_mask is not None
+            ):  # merge masks to prevent nan gradients for torch < 2.5.0
                 attn_mask = self._merge_masks(attn_mask, key_padding_mask, seqs)
                 key_padding_mask = None
 
@@ -158,6 +188,7 @@ class TransformerTorchBackbone(torch.nn.Module):
     def forward(
         self,
         sessions: torch.Tensor,  # [batch_size, session_max_len]
+        interaction_weights: tp.Optional[torch.Tensor] = None,
     ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass to get item and session embeddings.
@@ -173,6 +204,12 @@ class TransformerTorchBackbone(torch.nn.Module):
         -------
         (torch.Tensor, torch.Tensor)
         """
-        item_embs = self.item_model.get_all_embeddings()  # [n_items + n_item_extra_tokens, n_factors]
-        session_embs = self.encode_sessions(sessions, item_embs)  # [batch_size, session_max_len, n_factors]
+        item_embs = (
+            self.item_model.get_all_embeddings()
+        )  # [n_items + n_item_extra_tokens, n_factors]
+        session_embs = self.encode_sessions(
+            sessions,
+            item_embs,
+            interaction_weights=interaction_weights,
+        )  # [batch_size, session_max_len, n_factors]
         return item_embs, session_embs

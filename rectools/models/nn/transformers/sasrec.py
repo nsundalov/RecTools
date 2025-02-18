@@ -38,6 +38,7 @@ from .base import (
     ValMaskCallable,
 )
 from .data_preparator import TransformerDataPreparatorBase
+from .interaction_weighting import InteractionWeightingBase
 from .net_blocks import (
     LearnableInversePositionalEncoding,
     PointWiseFeedForward,
@@ -65,11 +66,21 @@ class SASRecDataPreparator(TransformerDataPreparatorBase):
         y = np.zeros((batch_size, self.session_max_len))
         yw = np.zeros((batch_size, self.session_max_len))
         for i, (ses, ses_weights) in enumerate(batch):
-            x[i, -len(ses) + 1 :] = ses[:-1]  # ses: [session_len] -> x[i]: [session_max_len]
-            y[i, -len(ses) + 1 :] = ses[1:]  # ses: [session_len] -> y[i]: [session_max_len]
-            yw[i, -len(ses) + 1 :] = ses_weights[1:]  # ses_weights: [session_len] -> yw[i]: [session_max_len]
+            x[i, -len(ses) + 1 :] = ses[
+                :-1
+            ]  # ses: [session_len] -> x[i]: [session_max_len]
+            y[i, -len(ses) + 1 :] = ses[
+                1:
+            ]  # ses: [session_len] -> y[i]: [session_max_len]
+            yw[i, -len(ses) + 1 :] = ses_weights[
+                1:
+            ]  # ses_weights: [session_len] -> yw[i]: [session_max_len]
 
-        batch_dict = {"x": torch.LongTensor(x), "y": torch.LongTensor(y), "yw": torch.FloatTensor(yw)}
+        batch_dict = {
+            "x": torch.LongTensor(x),
+            "y": torch.LongTensor(y),
+            "yw": torch.FloatTensor(yw),
+        }
         if self.n_negatives is not None:
             negatives = torch.randint(
                 low=self.n_item_extra_tokens,
@@ -79,23 +90,35 @@ class SASRecDataPreparator(TransformerDataPreparatorBase):
             batch_dict["negatives"] = negatives
         return batch_dict
 
-    def _collate_fn_val(self, batch: List[Tuple[List[int], List[float]]]) -> Dict[str, torch.Tensor]:
+    def _collate_fn_val(
+        self, batch: List[Tuple[List[int], List[float]]]
+    ) -> Dict[str, torch.Tensor]:
         batch_size = len(batch)
         x = np.zeros((batch_size, self.session_max_len))
         y = np.zeros((batch_size, 1))  # Only leave-one-strategy is supported for losses
-        yw = np.zeros((batch_size, 1))  # Only leave-one-strategy is supported for losses
+        yw = np.zeros(
+            (batch_size, 1)
+        )  # Only leave-one-strategy is supported for losses
         for i, (ses, ses_weights) in enumerate(batch):
-            input_session = [ses[idx] for idx, weight in enumerate(ses_weights) if weight == 0]
+            input_session = [
+                ses[idx] for idx, weight in enumerate(ses_weights) if weight == 0
+            ]
 
             # take only first target for leave-one-strategy
-            target_idx = [idx for idx, weight in enumerate(ses_weights) if weight != 0][0]
+            target_idx = [idx for idx, weight in enumerate(ses_weights) if weight != 0][
+                0
+            ]
 
             # ses: [session_len] -> x[i]: [session_max_len]
             x[i, -len(input_session) :] = input_session[-self.session_max_len :]
             y[i, -1:] = ses[target_idx]  # y[i]: [1]
             yw[i, -1:] = ses_weights[target_idx]  # yw[i]: [1]
 
-        batch_dict = {"x": torch.LongTensor(x), "y": torch.LongTensor(y), "yw": torch.FloatTensor(yw)}
+        batch_dict = {
+            "x": torch.LongTensor(x),
+            "y": torch.LongTensor(y),
+            "yw": torch.FloatTensor(yw),
+        }
         if self.n_negatives is not None:
             negatives = torch.randint(
                 low=self.n_item_extra_tokens,
@@ -105,7 +128,9 @@ class SASRecDataPreparator(TransformerDataPreparatorBase):
             batch_dict["negatives"] = negatives
         return batch_dict
 
-    def _collate_fn_recommend(self, batch: List[Tuple[List[int], List[float]]]) -> Dict[str, torch.Tensor]:
+    def _collate_fn_recommend(
+        self, batch: List[Tuple[List[int], List[float]]]
+    ) -> Dict[str, torch.Tensor]:
         """Right truncation, left padding to session_max_len"""
         x = np.zeros((len(batch), self.session_max_len))
         for i, (ses, _) in enumerate(batch):
@@ -135,10 +160,14 @@ class SASRecTransformerLayer(nn.Module):
     ):
         super().__init__()
         # important: original architecture had another version of MHA
-        self.multi_head_attn = torch.nn.MultiheadAttention(n_factors, n_heads, dropout_rate, batch_first=True)
+        self.multi_head_attn = torch.nn.MultiheadAttention(
+            n_factors, n_heads, dropout_rate, batch_first=True
+        )
         self.q_layer_norm = nn.LayerNorm(n_factors)
         self.ff_layer_norm = nn.LayerNorm(n_factors)
-        self.feed_forward = PointWiseFeedForward(n_factors, n_factors, dropout_rate, torch.nn.ReLU())
+        self.feed_forward = PointWiseFeedForward(
+            n_factors, n_factors, dropout_rate, torch.nn.ReLU()
+        )
         self.dropout = torch.nn.Dropout(dropout_rate)
 
     def forward(
@@ -167,7 +196,12 @@ class SASRecTransformerLayer(nn.Module):
         """
         q = self.q_layer_norm(seqs)
         mha_output, _ = self.multi_head_attn(
-            q, seqs, seqs, attn_mask=attn_mask, key_padding_mask=key_padding_mask, need_weights=False
+            q,
+            seqs,
+            seqs,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
         )
         seqs = q + mha_output
         ff_input = self.ff_layer_norm(seqs)
@@ -393,12 +427,28 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
         use_pos_emb: bool = True,
         use_key_padding_mask: bool = False,
         use_causal_attn: bool = True,
-        item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (IdEmbeddingsItemNet, CatFeaturesItemNet),
-        item_net_constructor_type: tp.Type[ItemNetConstructorBase] = SumOfEmbeddingsConstructor,
-        pos_encoding_type: tp.Type[PositionalEncodingBase] = LearnableInversePositionalEncoding,
-        transformer_layers_type: tp.Type[TransformerLayersBase] = SASRecTransformerLayers,  # SASRec authors net
-        data_preparator_type: tp.Type[TransformerDataPreparatorBase] = SASRecDataPreparator,
-        lightning_module_type: tp.Type[TransformerLightningModuleBase] = TransformerLightningModule,
+        item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (
+            IdEmbeddingsItemNet,
+            CatFeaturesItemNet,
+        ),
+        item_net_constructor_type: tp.Type[
+            ItemNetConstructorBase
+        ] = SumOfEmbeddingsConstructor,
+        pos_encoding_type: tp.Type[
+            PositionalEncodingBase
+        ] = LearnableInversePositionalEncoding,
+        interaction_weighting_type: tp.Optional[
+            tp.Type[InteractionWeightingBase]
+        ] = None,
+        transformer_layers_type: tp.Type[
+            TransformerLayersBase
+        ] = SASRecTransformerLayers,  # SASRec authors net
+        data_preparator_type: tp.Type[
+            TransformerDataPreparatorBase
+        ] = SASRecDataPreparator,
+        lightning_module_type: tp.Type[
+            TransformerLightningModuleBase
+        ] = TransformerLightningModule,
         get_val_mask_func: tp.Optional[ValMaskCallable] = None,
         get_trainer_func: tp.Optional[TrainerCallable] = None,
         recommend_batch_size: int = 256,
@@ -409,6 +459,7 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
         transformer_layers_kwargs: tp.Optional[InitKwargs] = None,
         item_net_constructor_kwargs: tp.Optional[InitKwargs] = None,
         pos_encoding_kwargs: tp.Optional[InitKwargs] = None,
+        interaction_weighting_kwargs: tp.Optional[InitKwargs] = None,
         lightning_module_kwargs: tp.Optional[InitKwargs] = None,
     ):
         super().__init__(
@@ -439,6 +490,7 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             item_net_block_types=item_net_block_types,
             item_net_constructor_type=item_net_constructor_type,
             pos_encoding_type=pos_encoding_type,
+            interaction_weighting_type=interaction_weighting_type,
             lightning_module_type=lightning_module_type,
             get_val_mask_func=get_val_mask_func,
             get_trainer_func=get_trainer_func,
@@ -446,5 +498,6 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             transformer_layers_kwargs=transformer_layers_kwargs,
             item_net_constructor_kwargs=item_net_constructor_kwargs,
             pos_encoding_kwargs=pos_encoding_kwargs,
+            interaction_weighting_kwargs=interaction_weighting_kwargs,
             lightning_module_kwargs=lightning_module_kwargs,
         )

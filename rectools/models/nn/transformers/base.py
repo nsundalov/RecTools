@@ -27,7 +27,12 @@ from pytorch_lightning import Trainer
 
 from rectools import ExternalIds
 from rectools.dataset.dataset import Dataset, DatasetSchema, DatasetSchemaDict, IdMap
-from rectools.models.base import ErrorBehaviour, InternalRecoTriplet, ModelBase, ModelConfig
+from rectools.models.base import (
+    ErrorBehaviour,
+    InternalRecoTriplet,
+    ModelBase,
+    ModelConfig,
+)
 from rectools.types import InternalIdsArray
 from rectools.utils.misc import get_class_or_function_full_path, import_object
 
@@ -39,6 +44,7 @@ from ..item_net import (
     SumOfEmbeddingsConstructor,
 )
 from .data_preparator import TransformerDataPreparatorBase
+from .interaction_weighting import InteractionWeightingBase
 from .lightning import TransformerLightningModule, TransformerLightningModuleBase
 from .net_blocks import (
     LearnableInversePositionalEncoding,
@@ -69,6 +75,16 @@ def _serialize_type_sequence(obj: tp.Sequence[tp.Type]) -> tp.Tuple[str, ...]:
 
 PositionalEncodingType = tpe.Annotated[
     tp.Type[PositionalEncodingBase],
+    BeforeValidator(_get_class_obj),
+    PlainSerializer(
+        func=get_class_or_function_full_path,
+        return_type=str,
+        when_used="json",
+    ),
+]
+
+InteractionWeightingType = tpe.Annotated[
+    tp.Type[InteractionWeightingBase],
     BeforeValidator(_get_class_obj),
     PlainSerializer(
         func=get_class_or_function_full_path,
@@ -181,6 +197,7 @@ class TransformerModelConfig(ModelConfig):
     item_net_block_types: ItemNetBlockTypes = (IdEmbeddingsItemNet, CatFeaturesItemNet)
     item_net_constructor_type: ItemNetConstructorType = SumOfEmbeddingsConstructor
     pos_encoding_type: PositionalEncodingType = LearnableInversePositionalEncoding
+    interaction_weighting_type: tp.Optional[InteractionWeightingType] = None
     transformer_layers_type: TransformerLayersType = PreLNTransformerLayers
     lightning_module_type: TransformerLightningModuleType = TransformerLightningModule
     get_val_mask_func: tp.Optional[ValMaskCallableSerialized] = None
@@ -192,7 +209,9 @@ class TransformerModelConfig(ModelConfig):
     lightning_module_kwargs: tp.Optional[InitKwargs] = None
 
 
-TransformerModelConfig_T = tp.TypeVar("TransformerModelConfig_T", bound=TransformerModelConfig)
+TransformerModelConfig_T = tp.TypeVar(
+    "TransformerModelConfig_T", bound=TransformerModelConfig
+)
 
 
 # ####  --------------  Transformer Model Base  --------------  #### #
@@ -212,7 +231,9 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
     def __init__(  # pylint: disable=too-many-arguments, too-many-locals
         self,
         data_preparator_type: tp.Type[TransformerDataPreparatorBase],
-        transformer_layers_type: tp.Type[TransformerLayersBase] = PreLNTransformerLayers,
+        transformer_layers_type: tp.Type[
+            TransformerLayersBase
+        ] = PreLNTransformerLayers,
         n_blocks: int = 2,
         n_heads: int = 4,
         n_factors: int = 256,
@@ -233,16 +254,29 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         recommend_batch_size: int = 256,
         recommend_torch_device: tp.Optional[str] = None,
         train_min_user_interactions: int = 2,
-        item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (IdEmbeddingsItemNet, CatFeaturesItemNet),
-        item_net_constructor_type: tp.Type[ItemNetConstructorBase] = SumOfEmbeddingsConstructor,
-        pos_encoding_type: tp.Type[PositionalEncodingBase] = LearnableInversePositionalEncoding,
-        lightning_module_type: tp.Type[TransformerLightningModuleBase] = TransformerLightningModule,
+        item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (
+            IdEmbeddingsItemNet,
+            CatFeaturesItemNet,
+        ),
+        item_net_constructor_type: tp.Type[
+            ItemNetConstructorBase
+        ] = SumOfEmbeddingsConstructor,
+        pos_encoding_type: tp.Type[
+            PositionalEncodingBase
+        ] = LearnableInversePositionalEncoding,
+        interaction_weighting_type: tp.Optional[
+            tp.Type[InteractionWeightingBase]
+        ] = None,
+        lightning_module_type: tp.Type[
+            TransformerLightningModuleBase
+        ] = TransformerLightningModule,
         get_val_mask_func: tp.Optional[ValMaskCallable] = None,
         get_trainer_func: tp.Optional[TrainerCallable] = None,
         data_preparator_kwargs: tp.Optional[InitKwargs] = None,
         transformer_layers_kwargs: tp.Optional[InitKwargs] = None,
         item_net_constructor_kwargs: tp.Optional[InitKwargs] = None,
         pos_encoding_kwargs: tp.Optional[InitKwargs] = None,
+        interaction_weighting_kwargs: tp.Optional[InitKwargs] = None,
         lightning_module_kwargs: tp.Optional[InitKwargs] = None,
         **kwargs: tp.Any,
     ) -> None:
@@ -271,6 +305,7 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         self.item_net_block_types = item_net_block_types
         self.item_net_constructor_type = item_net_constructor_type
         self.pos_encoding_type = pos_encoding_type
+        self.interaction_weighting_type = interaction_weighting_type
         self.lightning_module_type = lightning_module_type
         self.get_val_mask_func = get_val_mask_func
         self.get_trainer_func = get_trainer_func
@@ -278,6 +313,7 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         self.transformer_layers_kwargs = transformer_layers_kwargs
         self.item_net_constructor_kwargs = item_net_constructor_kwargs
         self.pos_encoding_kwargs = pos_encoding_kwargs
+        self.interaction_weighting_kwargs = interaction_weighting_kwargs
         self.lightning_module_kwargs = lightning_module_kwargs
 
         self._init_data_preparator()
@@ -330,7 +366,9 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
             **self._get_kwargs(self.item_net_constructor_kwargs),
         )
 
-    def _construct_item_net_from_dataset_schema(self, dataset_schema: DatasetSchema) -> ItemNetBase:
+    def _construct_item_net_from_dataset_schema(
+        self, dataset_schema: DatasetSchema
+    ) -> ItemNetBase:
         return self.item_net_constructor_type.from_dataset_schema(
             dataset_schema,
             self.n_factors,
@@ -347,6 +385,16 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
             **self._get_kwargs(self.pos_encoding_kwargs),
         )
 
+    def _init_interaction_weighting_layer(
+        self,
+    ) -> tp.Optional[InteractionWeightingBase]:
+        if self.interaction_weighting_type is None:
+            return None
+
+        return self.interaction_weighting_type(
+            **self._get_kwargs(self.interaction_weighting_kwargs),
+        )
+
     def _init_transformer_layers(self) -> TransformerLayersBase:
         return self.transformer_layers_type(
             n_blocks=self.n_blocks,
@@ -359,12 +407,15 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
     def _init_torch_model(self, item_model: ItemNetBase) -> TransformerTorchBackbone:
         pos_encoding_layer = self._init_pos_encoding_layer()
         transformer_layers = self._init_transformer_layers()
+        interaction_weighting_layer = self._init_interaction_weighting_layer()
+
         return TransformerTorchBackbone(
             n_heads=self.n_heads,
             dropout_rate=self.dropout_rate,
             item_model=item_model,
             pos_encoding_layer=pos_encoding_layer,
             transformer_layers=transformer_layers,
+            interaction_weighting_layer=interaction_weighting_layer,
             use_causal_attn=self.use_causal_attn,
             use_key_padding_mask=self.use_key_padding_mask,
         )
@@ -418,12 +469,18 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         self.fit_trainer.fit(self.lightning_model, train_dataloader, val_dataloader)
 
     def _custom_transform_dataset_u2i(
-        self, dataset: Dataset, users: ExternalIds, on_unsupported_targets: ErrorBehaviour
+        self,
+        dataset: Dataset,
+        users: ExternalIds,
+        on_unsupported_targets: ErrorBehaviour,
     ) -> Dataset:
         return self.data_preparator.transform_dataset_u2i(dataset, users)
 
     def _custom_transform_dataset_i2i(
-        self, dataset: Dataset, target_items: ExternalIds, on_unsupported_targets: ErrorBehaviour
+        self,
+        dataset: Dataset,
+        target_items: ExternalIds,
+        on_unsupported_targets: ErrorBehaviour,
     ) -> Dataset:
         return self.data_preparator.transform_dataset_i2i(dataset)
 
@@ -436,9 +493,13 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         sorted_item_ids_to_recommend: tp.Optional[InternalIdsArray],  # model_internal
     ) -> InternalRecoTriplet:
         if sorted_item_ids_to_recommend is None:
-            sorted_item_ids_to_recommend = self.data_preparator.get_known_items_sorted_internal_ids()  # model internal
+            sorted_item_ids_to_recommend = (
+                self.data_preparator.get_known_items_sorted_internal_ids()
+            )  # model internal
 
-        recommend_dataloader = self.data_preparator.get_dataloader_recommend(dataset, self.recommend_batch_size)
+        recommend_dataloader = self.data_preparator.get_dataloader_recommend(
+            dataset, self.recommend_batch_size
+        )
         return self.lightning_model._recommend_u2i(  # pylint: disable=protected-access
             user_ids=user_ids,
             recommend_dataloader=recommend_dataloader,
@@ -457,7 +518,9 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         sorted_item_ids_to_recommend: tp.Optional[InternalIdsArray],
     ) -> InternalRecoTriplet:
         if sorted_item_ids_to_recommend is None:
-            sorted_item_ids_to_recommend = self.data_preparator.get_known_items_sorted_internal_ids()
+            sorted_item_ids_to_recommend = (
+                self.data_preparator.get_known_items_sorted_internal_ids()
+            )
 
         return self.lightning_model._recommend_i2i(  # pylint: disable=protected-access
             target_ids=target_ids,
@@ -478,7 +541,9 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         return cls(**params)
 
     def _get_config(self) -> TransformerModelConfig_T:
-        attrs = self.config_class.model_json_schema(mode="serialization")["properties"].keys()
+        attrs = self.config_class.model_json_schema(mode="serialization")[
+            "properties"
+        ].keys()
         params = {attr: getattr(self, attr) for attr in attrs if attr != "cls"}
         params["cls"] = self.__class__
         return self.config_class(**params)
@@ -529,7 +594,9 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
 
     def __setstate__(self, state: tp.Dict[str, tp.Any]) -> None:
         if "fitted_checkpoint" in state:
-            checkpoint = torch.load(io.BytesIO(state["fitted_checkpoint"]), weights_only=False)
+            checkpoint = torch.load(
+                io.BytesIO(state["fitted_checkpoint"]), weights_only=False
+            )
             loaded = self._model_from_checkpoint(checkpoint)
         else:
             loaded = self.from_config(state["model_config"])
@@ -554,7 +621,9 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         loaded = cls._model_from_checkpoint(checkpoint)
         return loaded
 
-    def load_weights_from_checkpoint(self, checkpoint_path: tp.Union[str, Path]) -> None:
+    def load_weights_from_checkpoint(
+        self, checkpoint_path: tp.Union[str, Path]
+    ) -> None:
         """
         Load model weights from Lightning checkpoint path.
 
@@ -564,6 +633,8 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
             Path to checkpoint location.
         """
         if self.fit_trainer is None:
-            raise RuntimeError("Model weights cannot be loaded from checkpoint into unfitted model")
+            raise RuntimeError(
+                "Model weights cannot be loaded from checkpoint into unfitted model"
+            )
         checkpoint = torch.load(checkpoint_path, weights_only=False)
         self.lightning_model.load_state_dict(checkpoint["state_dict"])
