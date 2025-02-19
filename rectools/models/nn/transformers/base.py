@@ -206,6 +206,7 @@ class TransformerModelConfig(ModelConfig):
     transformer_layers_kwargs: tp.Optional[InitKwargs] = None
     item_net_constructor_kwargs: tp.Optional[InitKwargs] = None
     pos_encoding_kwargs: tp.Optional[InitKwargs] = None
+    interaction_weighting_kwargs: tp.Optional[InitKwargs] = None
     lightning_module_kwargs: tp.Optional[InitKwargs] = None
 
 
