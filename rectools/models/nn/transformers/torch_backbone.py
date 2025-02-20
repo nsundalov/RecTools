@@ -128,7 +128,7 @@ class TransformerTorchBackbone(torch.nn.Module):
         self,
         sessions: torch.Tensor,
         item_embs: torch.Tensor,
-        interaction_weights: tp.Optional[torch.Tensor],
+        interaction_weights: tp.Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Pass user history through item embeddings.
