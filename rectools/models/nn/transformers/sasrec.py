@@ -12,11 +12,14 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+import os
 import typing as tp
 from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
+from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import TensorBoardLogger
 from torch import nn
 
 from ..item_net import (
@@ -45,6 +48,33 @@ from .net_blocks import (
     PositionalEncodingBase,
     TransformerLayersBase,
 )
+
+
+def build_trainer_function(
+    verbose: int,
+    artifacts_dir: str,
+    epochs: int,
+    log_every_n_steps: tp.Optional[int] = None,
+):
+    def get_trainer() -> Trainer:
+        return Trainer(
+            log_every_n_steps=log_every_n_steps,
+            # deterministic=self.deterministic,
+            max_epochs=epochs,
+            min_epochs=epochs,
+            enable_progress_bar=verbose > 0,
+            enable_model_summary=verbose > 0,
+            devices=1,
+            logger=[
+                TensorBoardLogger(
+                    os.path.join(artifacts_dir, "logs"),
+                    name="tensorboard",
+                )
+            ],
+            # enable_checkpointing=False,
+        )
+
+    return get_trainer
 
 
 class SASRecDataPreparator(TransformerDataPreparatorBase):
@@ -287,6 +317,7 @@ class SASRecTransformerLayers(TransformerLayersBase):
 class SASRecModelConfig(TransformerModelConfig):
     """SASRecModel config."""
 
+    artifacts_dir: str
     data_preparator_type: TransformerDataPreparatorType = SASRecDataPreparator
     transformer_layers_type: TransformerLayersType = SASRecTransformerLayers
     use_causal_attn: bool = True
@@ -409,6 +440,7 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
 
     def __init__(  # pylint: disable=too-many-arguments, too-many-locals
         self,
+        artifacts_dir: str,
         n_blocks: int = 2,
         n_heads: int = 4,
         n_factors: int = 256,
@@ -462,6 +494,12 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
         interaction_weighting_kwargs: tp.Optional[InitKwargs] = None,
         lightning_module_kwargs: tp.Optional[InitKwargs] = None,
     ):
+        if get_trainer_func is not None:
+            raise ValueError("wrapper disallow usage of `get_trainer_func` arg")
+
+        # required before super().__init__ to pass `_get_trainer_func_custom`
+        self.artifacts_dir = artifacts_dir
+
         super().__init__(
             transformer_layers_type=transformer_layers_type,
             data_preparator_type=data_preparator_type,
@@ -501,3 +539,10 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             interaction_weighting_kwargs=interaction_weighting_kwargs,
             lightning_module_kwargs=lightning_module_kwargs,
         )
+
+    def _get_trainer_func_custom(self) -> Trainer:
+        return build_trainer_function(
+            verbose=self.verbose,
+            artifacts_dir=self.artifacts_dir,
+            epochs=self.epochs,
+        )()
