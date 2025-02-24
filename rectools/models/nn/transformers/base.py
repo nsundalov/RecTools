@@ -343,18 +343,21 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
             **self._get_kwargs(self.data_preparator_kwargs),
         )
 
+    def _get_trainer_func(self) -> Trainer:
+        return Trainer(
+            max_epochs=self.epochs,
+            min_epochs=self.epochs,
+            deterministic=self.deterministic,
+            enable_progress_bar=self.verbose > 0,
+            enable_model_summary=self.verbose > 0,
+            logger=self.verbose > 0,
+            enable_checkpointing=False,
+            devices=1,
+        )
+
     def _init_trainer(self) -> None:
         if self.get_trainer_func is None:
-            self._trainer = Trainer(
-                max_epochs=self.epochs,
-                min_epochs=self.epochs,
-                deterministic=self.deterministic,
-                enable_progress_bar=self.verbose > 0,
-                enable_model_summary=self.verbose > 0,
-                logger=self.verbose > 0,
-                enable_checkpointing=False,
-                devices=1,
-            )
+            self._trainer = self._get_trainer_func()
         else:
             self._trainer = self.get_trainer_func()
 

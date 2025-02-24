@@ -531,7 +531,7 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             interaction_weighting_type=interaction_weighting_type,
             lightning_module_type=lightning_module_type,
             get_val_mask_func=get_val_mask_func,
-            get_trainer_func=get_trainer_func,
+            get_trainer_func=None,
             data_preparator_kwargs=data_preparator_kwargs,
             transformer_layers_kwargs=transformer_layers_kwargs,
             item_net_constructor_kwargs=item_net_constructor_kwargs,
@@ -540,7 +540,7 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             lightning_module_kwargs=lightning_module_kwargs,
         )
 
-    def _get_trainer_func_custom(self) -> Trainer:
+    def _get_trainer_func(self) -> Trainer:
         return build_trainer_function(
             verbose=self.verbose,
             artifacts_dir=self.artifacts_dir,
