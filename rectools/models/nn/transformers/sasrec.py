@@ -50,33 +50,6 @@ from .net_blocks import (
 )
 
 
-def build_trainer_function(
-    verbose: int,
-    artifacts_dir: str,
-    epochs: int,
-    log_every_n_steps: tp.Optional[int] = None,
-):
-    def get_trainer() -> Trainer:
-        return Trainer(
-            log_every_n_steps=log_every_n_steps,
-            # deterministic=self.deterministic,
-            max_epochs=epochs,
-            min_epochs=epochs,
-            enable_progress_bar=verbose > 0,
-            enable_model_summary=verbose > 0,
-            devices=1,
-            logger=[
-                TensorBoardLogger(
-                    os.path.join(artifacts_dir, "logs"),
-                    name="tensorboard",
-                )
-            ],
-            # enable_checkpointing=False,
-        )
-
-    return get_trainer
-
-
 class SASRecDataPreparator(TransformerDataPreparatorBase):
     """Data preparator for SASRecModel."""
 
@@ -317,7 +290,6 @@ class SASRecTransformerLayers(TransformerLayersBase):
 class SASRecModelConfig(TransformerModelConfig):
     """SASRecModel config."""
 
-    artifacts_dir: str
     data_preparator_type: TransformerDataPreparatorType = SASRecDataPreparator
     transformer_layers_type: TransformerLayersType = SASRecTransformerLayers
     use_causal_attn: bool = True
@@ -494,12 +466,6 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
         interaction_weighting_kwargs: tp.Optional[InitKwargs] = None,
         lightning_module_kwargs: tp.Optional[InitKwargs] = None,
     ):
-        if get_trainer_func is not None:
-            raise ValueError("wrapper disallow usage of `get_trainer_func` arg")
-
-        # required before super().__init__ to pass `_get_trainer_func_custom`
-        self.artifacts_dir = artifacts_dir
-
         super().__init__(
             transformer_layers_type=transformer_layers_type,
             data_preparator_type=data_preparator_type,
@@ -531,7 +497,7 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             interaction_weighting_type=interaction_weighting_type,
             lightning_module_type=lightning_module_type,
             get_val_mask_func=get_val_mask_func,
-            get_trainer_func=None,
+            get_trainer_func=get_trainer_func,
             data_preparator_kwargs=data_preparator_kwargs,
             transformer_layers_kwargs=transformer_layers_kwargs,
             item_net_constructor_kwargs=item_net_constructor_kwargs,
@@ -539,10 +505,3 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             interaction_weighting_kwargs=interaction_weighting_kwargs,
             lightning_module_kwargs=lightning_module_kwargs,
         )
-
-    def _get_trainer_func(self) -> Trainer:
-        return build_trainer_function(
-            verbose=self.verbose,
-            artifacts_dir=self.artifacts_dir,
-            epochs=self.epochs,
-        )()
