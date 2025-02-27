@@ -13,6 +13,7 @@
 #  limitations under the License.
 
 import io
+import logging
 import typing as tp
 from collections.abc import Callable
 from copy import deepcopy
@@ -53,6 +54,8 @@ from .net_blocks import (
     TransformerLayersBase,
 )
 from .torch_backbone import TransformerTorchBackbone
+
+logger = logging.getLogger(__name__)
 
 InitKwargs = tp.Dict[str, tp.Any]
 
@@ -581,15 +584,16 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
 
     def __getstate__(self) -> object:
         if self.is_fitted:
-            if self.fit_trainer is None:
-                explanation = """
-                Model is fitted but has no `fit_trainer`. Most likely it was just loaded from the
-                checkpoint. Model that was loaded from checkpoint cannot be saved without being
-                fitted again.
-                """
-                raise RuntimeError(explanation)
+            trainer = self.fit_trainer
+            if trainer is None:
+                # here we lose training state but keep model's weights
+                # https://lightning.ai/forums/t/saving-a-lightningmodule-without-a-trainer/2217/3
+                logger.warning("fit_trainer is None; training state might be lost")
+                trainer = self._trainer
+                trainer.strategy.connect(self.lightning_model)
+
             with NamedTemporaryFile() as f:
-                self.fit_trainer.save_checkpoint(f.name)
+                trainer.save_checkpoint(f.name)
                 checkpoint = Path(f.name).read_bytes()
             state: tp.Dict[str, tp.Any] = {"fitted_checkpoint": checkpoint}
             return state
