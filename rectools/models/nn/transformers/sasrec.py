@@ -12,14 +12,11 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import os
 import typing as tp
 from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import TensorBoardLogger
 from torch import nn
 
 from ..item_net import (
@@ -41,7 +38,6 @@ from .base import (
     ValMaskCallable,
 )
 from .data_preparator import TransformerDataPreparatorBase
-from .interaction_weighting import InteractionWeightingBase
 from .net_blocks import (
     LearnableInversePositionalEncoding,
     PointWiseFeedForward,
@@ -379,7 +375,6 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
 
     def __init__(  # pylint: disable=too-many-arguments, too-many-locals
         self,
-        artifacts_dir: str,
         n_blocks: int = 2,
         n_heads: int = 4,
         n_factors: int = 256,
@@ -401,7 +396,6 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
         item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (IdEmbeddingsItemNet, CatFeaturesItemNet),
         item_net_constructor_type: tp.Type[ItemNetConstructorBase] = SumOfEmbeddingsConstructor,
         pos_encoding_type: tp.Type[PositionalEncodingBase] = LearnableInversePositionalEncoding,
-        interaction_weighting_type: tp.Optional[tp.Type[InteractionWeightingBase]] = None,
         transformer_layers_type: tp.Type[TransformerLayersBase] = SASRecTransformerLayers,  # SASRec authors net
         data_preparator_type: tp.Type[TransformerDataPreparatorBase] = SASRecDataPreparator,
         lightning_module_type: tp.Type[TransformerLightningModuleBase] = TransformerLightningModule,
@@ -415,7 +409,6 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
         transformer_layers_kwargs: tp.Optional[InitKwargs] = None,
         item_net_constructor_kwargs: tp.Optional[InitKwargs] = None,
         pos_encoding_kwargs: tp.Optional[InitKwargs] = None,
-        interaction_weighting_kwargs: tp.Optional[InitKwargs] = None,
         lightning_module_kwargs: tp.Optional[InitKwargs] = None,
     ):
         super().__init__(
@@ -446,7 +439,6 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             item_net_block_types=item_net_block_types,
             item_net_constructor_type=item_net_constructor_type,
             pos_encoding_type=pos_encoding_type,
-            interaction_weighting_type=interaction_weighting_type,
             lightning_module_type=lightning_module_type,
             get_val_mask_func=get_val_mask_func,
             get_trainer_func=get_trainer_func,
@@ -454,6 +446,5 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
             transformer_layers_kwargs=transformer_layers_kwargs,
             item_net_constructor_kwargs=item_net_constructor_kwargs,
             pos_encoding_kwargs=pos_encoding_kwargs,
-            interaction_weighting_kwargs=interaction_weighting_kwargs,
             lightning_module_kwargs=lightning_module_kwargs,
         )

@@ -45,7 +45,6 @@ from ..item_net import (
     SumOfEmbeddingsConstructor,
 )
 from .data_preparator import TransformerDataPreparatorBase
-from .interaction_weighting import InteractionWeightingBase
 from .lightning import TransformerLightningModule, TransformerLightningModuleBase
 from .net_blocks import (
     LearnableInversePositionalEncoding,
@@ -86,15 +85,6 @@ PositionalEncodingType = tpe.Annotated[
     ),
 ]
 
-InteractionWeightingType = tpe.Annotated[
-    tp.Type[InteractionWeightingBase],
-    BeforeValidator(_get_class_obj),
-    PlainSerializer(
-        func=get_class_or_function_full_path,
-        return_type=str,
-        when_used="json",
-    ),
-]
 
 TransformerLayersType = tpe.Annotated[
     tp.Type[TransformerLayersBase],
@@ -200,7 +190,6 @@ class TransformerModelConfig(ModelConfig):
     item_net_block_types: ItemNetBlockTypes = (IdEmbeddingsItemNet, CatFeaturesItemNet)
     item_net_constructor_type: ItemNetConstructorType = SumOfEmbeddingsConstructor
     pos_encoding_type: PositionalEncodingType = LearnableInversePositionalEncoding
-    interaction_weighting_type: tp.Optional[InteractionWeightingType] = None
     transformer_layers_type: TransformerLayersType = PreLNTransformerLayers
     lightning_module_type: TransformerLightningModuleType = TransformerLightningModule
     get_val_mask_func: tp.Optional[ValMaskCallableSerialized] = None
@@ -209,7 +198,6 @@ class TransformerModelConfig(ModelConfig):
     transformer_layers_kwargs: tp.Optional[InitKwargs] = None
     item_net_constructor_kwargs: tp.Optional[InitKwargs] = None
     pos_encoding_kwargs: tp.Optional[InitKwargs] = None
-    interaction_weighting_kwargs: tp.Optional[InitKwargs] = None
     lightning_module_kwargs: tp.Optional[InitKwargs] = None
 
 
@@ -257,7 +245,6 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (IdEmbeddingsItemNet, CatFeaturesItemNet),
         item_net_constructor_type: tp.Type[ItemNetConstructorBase] = SumOfEmbeddingsConstructor,
         pos_encoding_type: tp.Type[PositionalEncodingBase] = LearnableInversePositionalEncoding,
-        interaction_weighting_type: tp.Optional[tp.Type[InteractionWeightingBase]] = None,
         lightning_module_type: tp.Type[TransformerLightningModuleBase] = TransformerLightningModule,
         get_val_mask_func: tp.Optional[ValMaskCallable] = None,
         get_trainer_func: tp.Optional[TrainerCallable] = None,
@@ -265,7 +252,6 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         transformer_layers_kwargs: tp.Optional[InitKwargs] = None,
         item_net_constructor_kwargs: tp.Optional[InitKwargs] = None,
         pos_encoding_kwargs: tp.Optional[InitKwargs] = None,
-        interaction_weighting_kwargs: tp.Optional[InitKwargs] = None,
         lightning_module_kwargs: tp.Optional[InitKwargs] = None,
         **kwargs: tp.Any,
     ) -> None:
@@ -294,7 +280,6 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         self.item_net_block_types = item_net_block_types
         self.item_net_constructor_type = item_net_constructor_type
         self.pos_encoding_type = pos_encoding_type
-        self.interaction_weighting_type = interaction_weighting_type
         self.lightning_module_type = lightning_module_type
         self.get_val_mask_func = get_val_mask_func
         self.get_trainer_func = get_trainer_func
@@ -302,7 +287,6 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         self.transformer_layers_kwargs = transformer_layers_kwargs
         self.item_net_constructor_kwargs = item_net_constructor_kwargs
         self.pos_encoding_kwargs = pos_encoding_kwargs
-        self.interaction_weighting_kwargs = interaction_weighting_kwargs
         self.lightning_module_kwargs = lightning_module_kwargs
 
         self._init_data_preparator()
@@ -375,16 +359,6 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
             **self._get_kwargs(self.pos_encoding_kwargs),
         )
 
-    def _init_interaction_weighting_layer(
-        self,
-    ) -> tp.Optional[InteractionWeightingBase]:
-        if self.interaction_weighting_type is None:
-            return None
-
-        return self.interaction_weighting_type(
-            **self._get_kwargs(self.interaction_weighting_kwargs),
-        )
-
     def _init_transformer_layers(self) -> TransformerLayersBase:
         return self.transformer_layers_type(
             n_blocks=self.n_blocks,
@@ -397,15 +371,12 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
     def _init_torch_model(self, item_model: ItemNetBase) -> TransformerTorchBackbone:
         pos_encoding_layer = self._init_pos_encoding_layer()
         transformer_layers = self._init_transformer_layers()
-        interaction_weighting_layer = self._init_interaction_weighting_layer()
-
         return TransformerTorchBackbone(
             n_heads=self.n_heads,
             dropout_rate=self.dropout_rate,
             item_model=item_model,
             pos_encoding_layer=pos_encoding_layer,
             transformer_layers=transformer_layers,
-            interaction_weighting_layer=interaction_weighting_layer,
             use_causal_attn=self.use_causal_attn,
             use_key_padding_mask=self.use_key_padding_mask,
         )
@@ -459,18 +430,12 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         self.fit_trainer.fit(self.lightning_model, train_dataloader, val_dataloader)
 
     def _custom_transform_dataset_u2i(
-        self,
-        dataset: Dataset,
-        users: ExternalIds,
-        on_unsupported_targets: ErrorBehaviour,
+        self, dataset: Dataset, users: ExternalIds, on_unsupported_targets: ErrorBehaviour
     ) -> Dataset:
         return self.data_preparator.transform_dataset_u2i(dataset, users)
 
     def _custom_transform_dataset_i2i(
-        self,
-        dataset: Dataset,
-        target_items: ExternalIds,
-        on_unsupported_targets: ErrorBehaviour,
+        self, dataset: Dataset, target_items: ExternalIds, on_unsupported_targets: ErrorBehaviour
     ) -> Dataset:
         return self.data_preparator.transform_dataset_i2i(dataset)
 

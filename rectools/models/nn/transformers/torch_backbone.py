@@ -17,7 +17,6 @@ import typing as tp
 import torch
 
 from ..item_net import ItemNetBase
-from .interaction_weighting import InteractionWeightingBase
 from .net_blocks import PositionalEncodingBase, TransformerLayersBase
 
 
@@ -50,7 +49,6 @@ class TransformerTorchBackbone(torch.nn.Module):
         item_model: ItemNetBase,
         pos_encoding_layer: PositionalEncodingBase,
         transformer_layers: TransformerLayersBase,
-        interaction_weighting_layer: tp.Optional[InteractionWeightingBase],
         use_causal_attn: bool = True,
         use_key_padding_mask: bool = False,
     ) -> None:
@@ -60,7 +58,6 @@ class TransformerTorchBackbone(torch.nn.Module):
         self.pos_encoding_layer = pos_encoding_layer
         self.emb_dropout = torch.nn.Dropout(dropout_rate)
         self.transformer_layers = transformer_layers
-        self.interaction_weighting_layer = interaction_weighting_layer
         self.use_causal_attn = use_causal_attn
         self.use_key_padding_mask = use_key_padding_mask
         self.n_heads = n_heads
@@ -117,9 +114,7 @@ class TransformerTorchBackbone(torch.nn.Module):
         torch.diagonal(res, dim1=1, dim2=2).zero_()
         return res
 
-    def encode_sessions(
-        self, sessions: torch.Tensor, item_embs: torch.Tensor, interaction_weights: tp.Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def encode_sessions(self, sessions: torch.Tensor, item_embs: torch.Tensor) -> torch.Tensor:
         """
         Pass user history through item embeddings.
         Add positional encoding.
@@ -144,13 +139,6 @@ class TransformerTorchBackbone(torch.nn.Module):
         timeline_mask = (sessions != 0).unsqueeze(-1)  # [batch_size, session_max_len, 1]
 
         seqs = item_embs[sessions]  # [batch_size, session_max_len, n_factors]
-        if self.interaction_weighting_layer is not None:
-            if interaction_weights is None:
-                explanation = "interaction_weights must not be None if interaction_weighting_layer is specified"
-                raise ValueError(explanation)
-
-            seqs = self.interaction_weighting_layer(seqs, weights=interaction_weights)
-
         seqs = self.pos_encoding_layer(seqs)
         seqs = self.emb_dropout(seqs)
 
@@ -170,7 +158,6 @@ class TransformerTorchBackbone(torch.nn.Module):
     def forward(
         self,
         sessions: torch.Tensor,  # [batch_size, session_max_len]
-        interaction_weights: tp.Optional[torch.Tensor] = None,
     ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass to get item and session embeddings.
@@ -187,9 +174,5 @@ class TransformerTorchBackbone(torch.nn.Module):
         (torch.Tensor, torch.Tensor)
         """
         item_embs = self.item_model.get_all_embeddings()  # [n_items + n_item_extra_tokens, n_factors]
-        session_embs = self.encode_sessions(
-            sessions,
-            item_embs,
-            interaction_weights=interaction_weights,
-        )  # [batch_size, session_max_len, n_factors]
+        session_embs = self.encode_sessions(sessions, item_embs)  # [batch_size, session_max_len, n_factors]
         return item_embs, session_embs
