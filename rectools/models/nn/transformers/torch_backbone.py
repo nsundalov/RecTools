@@ -67,9 +67,7 @@ class TransformerTorchBackbone(torch.nn.Module):
 
     @staticmethod
     def _convert_mask_to_float(mask: torch.Tensor, query: torch.Tensor) -> torch.Tensor:
-        return torch.zeros_like(mask, dtype=query.dtype).masked_fill_(
-            mask, float("-inf")
-        )
+        return torch.zeros_like(mask, dtype=query.dtype).masked_fill_(mask, float("-inf"))
 
     def _merge_masks(
         self,
@@ -101,16 +99,14 @@ class TransformerTorchBackbone(torch.nn.Module):
         """
         batch_size, seq_len, _ = query.shape
 
-        key_padding_mask_expanded = (
-            self._convert_mask_to_float(  # [batch_size, session_max_len]
-                key_padding_mask, query
-            ).view(batch_size, 1, seq_len)
+        key_padding_mask_expanded = self._convert_mask_to_float(  # [batch_size, session_max_len]
+            key_padding_mask, query
+        ).view(
+            batch_size, 1, seq_len
         )  # [batch_size, 1, session_max_len]
 
         attn_mask_expanded = (
-            self._convert_mask_to_float(
-                attn_mask, query
-            )  # [session_max_len, session_max_len]
+            self._convert_mask_to_float(attn_mask, query)  # [session_max_len, session_max_len]
             .view(1, seq_len, seq_len)
             .expand(batch_size, -1, -1)
         )  # [batch_size, session_max_len, session_max_len]
@@ -151,9 +147,7 @@ class TransformerTorchBackbone(torch.nn.Module):
         attn_mask = None
         key_padding_mask = None
 
-        timeline_mask = (sessions != 0).unsqueeze(
-            -1
-        )  # [batch_size, session_max_len, 1]
+        timeline_mask = (sessions != 0).unsqueeze(-1)  # [batch_size, session_max_len, 1]
 
         seqs = item_embs[sessions]  # [batch_size, session_max_len, n_factors]
         if self.interaction_weighting_layer is not None:
@@ -176,9 +170,7 @@ class TransformerTorchBackbone(torch.nn.Module):
             )
         if self.use_key_padding_mask:
             key_padding_mask = sessions == 0
-            if (
-                attn_mask is not None
-            ):  # merge masks to prevent nan gradients for torch < 2.5.0
+            if attn_mask is not None:  # merge masks to prevent nan gradients for torch < 2.5.0
                 attn_mask = self._merge_masks(attn_mask, key_padding_mask, seqs)
                 key_padding_mask = None
 
@@ -204,9 +196,7 @@ class TransformerTorchBackbone(torch.nn.Module):
         -------
         (torch.Tensor, torch.Tensor)
         """
-        item_embs = (
-            self.item_model.get_all_embeddings()
-        )  # [n_items + n_item_extra_tokens, n_factors]
+        item_embs = self.item_model.get_all_embeddings()  # [n_items + n_item_extra_tokens, n_factors]
         session_embs = self.encode_sessions(
             sessions,
             item_embs,
