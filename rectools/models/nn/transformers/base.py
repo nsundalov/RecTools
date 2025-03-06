@@ -28,7 +28,12 @@ from pytorch_lightning import Trainer
 
 from rectools import ExternalIds
 from rectools.dataset.dataset import Dataset, DatasetSchema, DatasetSchemaDict, IdMap
-from rectools.models.base import ErrorBehaviour, InternalRecoTriplet, ModelBase, ModelConfig
+from rectools.models.base import (
+    ErrorBehaviour,
+    InternalRecoTriplet,
+    ModelBase,
+    ModelConfig,
+)
 from rectools.types import InternalIdsArray
 from rectools.utils.misc import get_class_or_function_full_path, import_object
 
@@ -249,10 +254,7 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         recommend_batch_size: int = 256,
         recommend_torch_device: tp.Optional[str] = None,
         train_min_user_interactions: int = 2,
-        item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (
-            IdEmbeddingsItemNet,
-            CatFeaturesItemNet,
-        ),
+        item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (IdEmbeddingsItemNet, CatFeaturesItemNet),
         item_net_constructor_type: tp.Type[ItemNetConstructorBase] = SumOfEmbeddingsConstructor,
         pos_encoding_type: tp.Type[PositionalEncodingBase] = LearnableInversePositionalEncoding,
         interaction_weighting_type: tp.Optional[tp.Type[InteractionWeightingBase]] = None,

@@ -70,10 +70,7 @@ class TransformerTorchBackbone(torch.nn.Module):
         return torch.zeros_like(mask, dtype=query.dtype).masked_fill_(mask, float("-inf"))
 
     def _merge_masks(
-        self,
-        attn_mask: torch.Tensor,
-        key_padding_mask: torch.Tensor,
-        query: torch.Tensor,
+        self, attn_mask: torch.Tensor, key_padding_mask: torch.Tensor, query: torch.Tensor
     ) -> torch.Tensor:
         """
         Merge `attn_mask` and `key_padding_mask` as a new `attn_mask`.
@@ -121,10 +118,7 @@ class TransformerTorchBackbone(torch.nn.Module):
         return res
 
     def encode_sessions(
-        self,
-        sessions: torch.Tensor,
-        item_embs: torch.Tensor,
-        interaction_weights: tp.Optional[torch.Tensor] = None,
+        self, sessions: torch.Tensor, item_embs: torch.Tensor, interaction_weights: tp.Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Pass user history through item embeddings.
@@ -162,11 +156,7 @@ class TransformerTorchBackbone(torch.nn.Module):
 
         if self.use_causal_attn:
             attn_mask = ~torch.tril(
-                torch.ones(
-                    (session_max_len, session_max_len),
-                    dtype=torch.bool,
-                    device=sessions.device,
-                )
+                torch.ones((session_max_len, session_max_len), dtype=torch.bool, device=sessions.device)
             )
         if self.use_key_padding_mask:
             key_padding_mask = sessions == 0

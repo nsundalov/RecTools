@@ -73,11 +73,7 @@ class SASRecDataPreparator(TransformerDataPreparatorBase):
             y[i, -len(ses) + 1 :] = ses[1:]  # ses: [session_len] -> y[i]: [session_max_len]
             yw[i, -len(ses) + 1 :] = ses_weights[1:]  # ses_weights: [session_len] -> yw[i]: [session_max_len]
 
-        batch_dict = {
-            "x": torch.LongTensor(x),
-            "y": torch.LongTensor(y),
-            "yw": torch.FloatTensor(yw),
-        }
+        batch_dict = {"x": torch.LongTensor(x), "y": torch.LongTensor(y), "yw": torch.FloatTensor(yw)}
         if self.n_negatives is not None:
             negatives = torch.randint(
                 low=self.n_item_extra_tokens,
@@ -103,11 +99,7 @@ class SASRecDataPreparator(TransformerDataPreparatorBase):
             y[i, -1:] = ses[target_idx]  # y[i]: [1]
             yw[i, -1:] = ses_weights[target_idx]  # yw[i]: [1]
 
-        batch_dict = {
-            "x": torch.LongTensor(x),
-            "y": torch.LongTensor(y),
-            "yw": torch.FloatTensor(yw),
-        }
+        batch_dict = {"x": torch.LongTensor(x), "y": torch.LongTensor(y), "yw": torch.FloatTensor(yw)}
         if self.n_negatives is not None:
             negatives = torch.randint(
                 low=self.n_item_extra_tokens,
@@ -179,12 +171,7 @@ class SASRecTransformerLayer(nn.Module):
         """
         q = self.q_layer_norm(seqs)
         mha_output, _ = self.multi_head_attn(
-            q,
-            seqs,
-            seqs,
-            attn_mask=attn_mask,
-            key_padding_mask=key_padding_mask,
-            need_weights=False,
+            q, seqs, seqs, attn_mask=attn_mask, key_padding_mask=key_padding_mask, need_weights=False
         )
         seqs = q + mha_output
         ff_input = self.ff_layer_norm(seqs)
@@ -411,10 +398,7 @@ class SASRecModel(TransformerModelBase[SASRecModelConfig]):
         use_pos_emb: bool = True,
         use_key_padding_mask: bool = False,
         use_causal_attn: bool = True,
-        item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (
-            IdEmbeddingsItemNet,
-            CatFeaturesItemNet,
-        ),
+        item_net_block_types: tp.Sequence[tp.Type[ItemNetBase]] = (IdEmbeddingsItemNet, CatFeaturesItemNet),
         item_net_constructor_type: tp.Type[ItemNetConstructorBase] = SumOfEmbeddingsConstructor,
         pos_encoding_type: tp.Type[PositionalEncodingBase] = LearnableInversePositionalEncoding,
         interaction_weighting_type: tp.Optional[tp.Type[InteractionWeightingBase]] = None,
