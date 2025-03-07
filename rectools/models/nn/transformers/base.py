@@ -13,6 +13,7 @@
 #  limitations under the License.
 
 import io
+import logging
 import typing as tp
 from collections.abc import Callable
 from copy import deepcopy
@@ -27,7 +28,12 @@ from pytorch_lightning import Trainer
 
 from rectools import ExternalIds
 from rectools.dataset.dataset import Dataset, DatasetSchema, DatasetSchemaDict, IdMap
-from rectools.models.base import ErrorBehaviour, InternalRecoTriplet, ModelBase, ModelConfig
+from rectools.models.base import (
+    ErrorBehaviour,
+    InternalRecoTriplet,
+    ModelBase,
+    ModelConfig,
+)
 from rectools.types import InternalIdsArray
 from rectools.utils.misc import get_class_or_function_full_path, import_object
 
@@ -47,6 +53,8 @@ from .net_blocks import (
     TransformerLayersBase,
 )
 from .torch_backbone import TransformerTorchBackbone
+
+logger = logging.getLogger(__name__)
 
 InitKwargs = tp.Dict[str, tp.Any]
 
@@ -76,6 +84,7 @@ PositionalEncodingType = tpe.Annotated[
         when_used="json",
     ),
 ]
+
 
 TransformerLayersType = tpe.Annotated[
     tp.Type[TransformerLayersBase],
@@ -185,6 +194,7 @@ class TransformerModelConfig(ModelConfig):
     lightning_module_type: TransformerLightningModuleType = TransformerLightningModule
     get_val_mask_func: tp.Optional[ValMaskCallableSerialized] = None
     get_trainer_func: tp.Optional[TrainerCallableSerialized] = None
+    get_trainer_func_kwargs: tp.Optional[InitKwargs] = None
     data_preparator_kwargs: tp.Optional[InitKwargs] = None
     transformer_layers_kwargs: tp.Optional[InitKwargs] = None
     item_net_constructor_kwargs: tp.Optional[InitKwargs] = None
@@ -239,6 +249,7 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         lightning_module_type: tp.Type[TransformerLightningModuleBase] = TransformerLightningModule,
         get_val_mask_func: tp.Optional[ValMaskCallable] = None,
         get_trainer_func: tp.Optional[TrainerCallable] = None,
+        get_trainer_func_kwargs: tp.Optional[InitKwargs] = None,
         data_preparator_kwargs: tp.Optional[InitKwargs] = None,
         transformer_layers_kwargs: tp.Optional[InitKwargs] = None,
         item_net_constructor_kwargs: tp.Optional[InitKwargs] = None,
@@ -274,6 +285,7 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         self.lightning_module_type = lightning_module_type
         self.get_val_mask_func = get_val_mask_func
         self.get_trainer_func = get_trainer_func
+        self.get_trainer_func_kwargs = get_trainer_func_kwargs
         self.data_preparator_kwargs = data_preparator_kwargs
         self.transformer_layers_kwargs = transformer_layers_kwargs
         self.item_net_constructor_kwargs = item_net_constructor_kwargs
@@ -306,20 +318,24 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
             **self._get_kwargs(self.data_preparator_kwargs),
         )
 
+    def _get_trainer_func(self) -> Trainer:
+        return Trainer(
+            max_epochs=self.epochs,
+            min_epochs=self.epochs,
+            deterministic=self.deterministic,
+            enable_progress_bar=self.verbose > 0,
+            enable_model_summary=self.verbose > 0,
+            logger=self.verbose > 0,
+            enable_checkpointing=False,
+            devices=1,
+        )
+
     def _init_trainer(self) -> None:
-        if self.get_trainer_func is None:
-            self._trainer = Trainer(
-                max_epochs=self.epochs,
-                min_epochs=self.epochs,
-                deterministic=self.deterministic,
-                enable_progress_bar=self.verbose > 0,
-                enable_model_summary=self.verbose > 0,
-                logger=self.verbose > 0,
-                enable_checkpointing=False,
-                devices=1,
-            )
-        else:
-            self._trainer = self.get_trainer_func()
+        get_trainer_func = self.get_trainer_func if self.get_trainer_func is not None else self._get_trainer_func
+
+        kwargs = self.get_trainer_func_kwargs if self.get_trainer_func_kwargs is not None else {}
+
+        self._trainer = get_trainer_func(**kwargs)
 
     def _construct_item_net(self, dataset: Dataset) -> ItemNetBase:
         return self.item_net_constructor_type.from_dataset(
@@ -512,15 +528,16 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
 
     def __getstate__(self) -> object:
         if self.is_fitted:
-            if self.fit_trainer is None:
-                explanation = """
-                Model is fitted but has no `fit_trainer`. Most likely it was just loaded from the
-                checkpoint. Model that was loaded from checkpoint cannot be saved without being
-                fitted again.
-                """
-                raise RuntimeError(explanation)
+            trainer = self.fit_trainer
+            if trainer is None:
+                # here we lose training state but keep model's weights
+                # https://lightning.ai/forums/t/saving-a-lightningmodule-without-a-trainer/2217/3
+                logger.warning("fit_trainer is None; training state might be lost")
+                trainer = self._trainer
+                trainer.strategy.connect(self.lightning_model)
+
             with NamedTemporaryFile() as f:
-                self.fit_trainer.save_checkpoint(f.name)
+                trainer.save_checkpoint(f.name)
                 checkpoint = Path(f.name).read_bytes()
             state: tp.Dict[str, tp.Any] = {"fitted_checkpoint": checkpoint}
             return state
