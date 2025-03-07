@@ -13,8 +13,8 @@
 #  limitations under the License.
 
 import io
-import logging
 import typing as tp
+import warnings
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
@@ -53,8 +53,6 @@ from .net_blocks import (
     TransformerLayersBase,
 )
 from .torch_backbone import TransformerTorchBackbone
-
-logger = logging.getLogger(__name__)
 
 InitKwargs = tp.Dict[str, tp.Any]
 
@@ -150,7 +148,7 @@ ValMaskCallableSerialized = tpe.Annotated[
     ),
 ]
 
-TrainerCallable = Callable[[], Trainer]
+TrainerCallable = Callable[..., Trainer]
 
 TrainerCallableSerialized = tpe.Annotated[
     TrainerCallable,
@@ -331,11 +329,11 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
         )
 
     def _init_trainer(self) -> None:
-        get_trainer_func = self.get_trainer_func if self.get_trainer_func is not None else self._get_trainer_func
+        if self.get_trainer_func is None:
+            self._trainer = self._get_trainer_func()
 
-        kwargs = self.get_trainer_func_kwargs if self.get_trainer_func_kwargs is not None else {}
-
-        self._trainer = get_trainer_func(**kwargs)
+        else:
+            self._trainer = self.get_trainer_func(**self._get_kwargs(self.get_trainer_func_kwargs))
 
     def _construct_item_net(self, dataset: Dataset) -> ItemNetBase:
         return self.item_net_constructor_type.from_dataset(
@@ -532,7 +530,8 @@ class TransformerModelBase(ModelBase[TransformerModelConfig_T]):  # pylint: disa
             if trainer is None:
                 # here we lose training state but keep model's weights
                 # https://lightning.ai/forums/t/saving-a-lightningmodule-without-a-trainer/2217/3
-                logger.warning("fit_trainer is None; training state might be lost")
+
+                warnings.warn("fit_trainer is None; training state might be lost")
                 trainer = self._trainer
                 trainer.strategy.connect(self.lightning_model)
 
